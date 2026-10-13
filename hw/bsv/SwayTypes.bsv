@@ -8,55 +8,68 @@ typedef 8 InputHeight;
 typedef 8 InputWidth;
 typedef 5 InputChannels;
 typedef 2 PatchSide;
-typedef TDiv#(InputHeight, PatchSide) PatchRows;
-typedef TDiv#(InputWidth, PatchSide) PatchColumns;
-typedef TMul#(TMul#(InputHeight, InputWidth), InputChannels) FrameElements;
-typedef TMul#(TMul#(PatchSide, PatchSide), InputChannels) PatchElements;
-typedef TMul#(PatchRows, PatchColumns) TokenNum;
+typedef TDiv#(InputHeight, PatchSide) PatchRows; //4
+typedef TDiv#(InputWidth, PatchSide) PatchColumns; //4
+typedef TMul#(TMul#(InputHeight, InputWidth), InputChannels) FrameElements; //320
+typedef TMul#(TMul#(PatchSide, PatchSide), InputChannels) PatchElements; // size of a single patch, 20(=320/16)
+typedef TMul#(PatchRows, PatchColumns) TokenNum; //num of tokens, 16
 
-typedef 20 ModelDim;
-typedef TMul#(2, ModelDim) InnerDim;
-typedef 8 StateDim;
-typedef 2 DeltaRank;
-typedef TMul#(2, InnerDim) ExpandedDim;
-typedef TAdd#(DeltaRank, TMul#(2, StateDim)) ProjectionDim;
-typedef TMul#(TokenNum, ModelDim) HeadInputDim;
-typedef 19 JointNum;
-typedef TMul#(3, JointNum) OutputDim;
+typedef 20 ModelDim; // demension of token embedding, 20
+typedef TMul#(2, ModelDim) InnerDim; // channel of block, 40
+typedef 8 StateDim; // demension of state, 8
+typedef 2 DeltaRank; // demension of delta, 2
+typedef TMul#(2, InnerDim) ExpandedDim; //80
+typedef TAdd#(DeltaRank, TMul#(2, StateDim)) ProjectionDim; // size of projection, 18
+typedef TMul#(TokenNum, ModelDim) HeadInputDim; // size of head input, 320
+typedef 19 JointNum; // number of joints, 19
+typedef TMul#(3, JointNum) OutputDim; // size of output, 57
 
 // Change only this divisor to scale the independent engines: 1, 2, or 4.
 // Each engine retains at least one lane; model dimensions and weights stay fixed.
-typedef 4 ParallelismDivisor;
+typedef 4 ParallelismDivisor; // default 4, 1 engine per block, 4 lanes per engine
+
 typedef TMax#(1, TDiv#(4, ParallelismDivisor)) LinearLanes;
 typedef TMax#(1, TDiv#(2, ParallelismDivisor)) NormLanes;
 typedef TMax#(1, TDiv#(2, ParallelismDivisor)) ConvLanes;
 typedef TMax#(1, TDiv#(2, ParallelismDivisor)) GateLanes;
 typedef TMax#(1, TDiv#(2, ParallelismDivisor)) ScanLanes;
+
+// size of the convolution kernel
 typedef 4 ConvTaps;
+
+// store past token except the current one
 typedef TSub#(ConvTaps, 1) ConvHistory;
+
+// size of inputQ, outputQ
 typedef 32 SerialFifoDepth;
+
+// size of residual!, gateDelayQ
 typedef 4 ResidualSlots;
 
 typedef struct {
-	Bit#(4) index;
-	Vector#(n, Int#(8)) data;
+	Bit#(4) index; // index of the token, 0~15
+	Vector#(n, Int#(8)) data; // int8 값 n개
 } Token#(numeric type n) deriving (Bits, Eq, FShow);
 
+// y=wx+b
 interface LinearIfc#(numeric type n, numeric type m);
 	method Action put(Token#(n) value);
 	method ActionValue#(Token#(m)) get;
 endinterface
 
+// y=norm(x)
 interface NormIfc;
 	method Action put(Token#(ModelDim) value);
 	method ActionValue#(Token#(ModelDim)) get;
 endinterface
 
+// y=block(x), mambablock
 interface BlockIfc;
 	method Action put(Token#(ModelDim) value);
 	method ActionValue#(Token#(ModelDim)) get;
 endinterface
 
+// whole kernel
 interface SwayIfc;
 	// 320 signed INT8 elements per frame, HWC order, scale from nodeScale("input").
 	method Action put(Int#(8) value);
@@ -90,6 +103,7 @@ function Int#(n) shiftRoundN(Int#(n) value, Integer fromExp, Integer toExp);
 	return result;
 endfunction
 
+// clipping
 function Int#(8) clip8N(Int#(n) value) provisos(Add#(8, padding, n));
 	return value > 127 ? 127 : (value < -128 ? -128 : truncate(value));
 endfunction
@@ -98,6 +112,7 @@ function Int#(24) clip24N(Int#(n) value) provisos(Add#(24, padding, n));
 	return value > 8388607 ? 8388607 : (value < -8388608 ? -8388608 : truncate(value));
 endfunction
 
+// requantization ( shiftRound + clip8N )
 function Int#(8) requantN(Int#(n) value, Integer fromExp, Integer toExp)
 	provisos(Add#(9, padding9, n), Add#(8, padding8, n));
 	Bit#(n) sourceBits = pack(value);
@@ -145,6 +160,9 @@ function Int#(8) requantN(Int#(n) value, Integer fromExp, Integer toExp)
 	return result;
 endfunction
 
+
+
+// fix input width
 function Int#(32) shiftRound32(Int#(32) value, Integer fromExp, Integer toExp);
 	return shiftRoundN(value, fromExp, toExp);
 endfunction

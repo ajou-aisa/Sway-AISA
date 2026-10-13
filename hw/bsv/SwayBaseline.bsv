@@ -43,18 +43,9 @@ module mkSwayBaseline(SwayIfc);
 	rule process1;
 		Int#(8) value = inputQ.first;
 		inputQ.deq;
-		Vector#(FrameElements, Int#(8)) nextInput = newVector;
-		for ( Integer element = 0; element < valueOf(FrameElements); element = element + 1 ) begin
-			if ( inputCnt == fromInteger(element) ) begin
-				inputR[element] <= value;
-			end
-			// Forward the last input before its register write takes effect.
-			if ( element == valueOf(FrameElements) - 1 ) begin
-				nextInput[element] = value;
-			end else begin
-				nextInput[element] = inputR[element];
-			end
-		end
+		// Shifting replaces the 320-way write decoder and also forwards the last input.
+		Vector#(FrameElements, Int#(8)) nextInput = shiftInAtN(readVReg(inputR), value);
+		writeVReg(inputR, nextInput);
 		if ( lastInputR ) begin
 			frameQ.enq(nextInput);
 			inputCnt <= 0;
